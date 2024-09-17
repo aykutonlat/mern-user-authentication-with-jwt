@@ -8,6 +8,7 @@ import {
   comparePassword,
   generateAccessToken,
   generateRefreshToken,
+  generateRegistrationToken,
   getRemainingLockTime,
   handleIpAndLoginHistory,
   isAccountLocked,
@@ -16,8 +17,16 @@ import {
 } from "../../utils/authHelpers";
 import { NotificationPreferences } from "../../models/notificationPreferencesModel";
 import { Address } from "../../models/addressModel";
+import { sendVerificationMail } from "../../mails/verificationMail";
+import jwt from "jsonwebtoken";
+import { IUser } from "../../models/userModel";
+import { resendVerificationMail } from "../../mails/resendVerificationMail";
 
 dotenv.config();
+
+interface AuthenticatedRequest extends Request {
+  userId?: string;
+}
 
 export const register = async (req: Request, res: Response) => {
   const { username, email, password } = req.body;
@@ -78,7 +87,7 @@ export const register = async (req: Request, res: Response) => {
     const hashedPassword = await bcrypt.hash(password, salt);
 
     const user = new User({
-      username,
+      username: username.toLowerCase(),
       email,
       password: hashedPassword,
     });
@@ -99,11 +108,35 @@ export const register = async (req: Request, res: Response) => {
     user.notificationPreferences =
       notificationPreferences._id as mongoose.Types.ObjectId;
 
-    await user.save();
-
     const userId = user._id as mongoose.Types.ObjectId;
     const accessToken = generateAccessToken(userId.toString());
     const refreshToken = generateRefreshToken(userId.toString());
+
+    const registerMailToken = generateRegistrationToken(userId.toString());
+    const registerMailExpires =
+      process.env.REGISTRATION_TOKEN_SECRET_EXPIRES_IN;
+
+    user.emailVerificationToken = registerMailToken;
+    user.emailVerificationExpires = new Date(
+      Date.now() + parseInt(registerMailExpires as string) * 60 * 1000
+    );
+
+    await user.save();
+
+    const sendMail = await sendVerificationMail(
+      user.username,
+      user.email,
+      registerMailToken
+    );
+
+    if (!sendMail) {
+      return res.status(500).json({
+        message: "Failed to send registration email.",
+        code: "MAIL_SEND_ERROR",
+        details:
+          "An error occurred while sending the registration email. Please try again.",
+      });
+    }
 
     return res.status(201).json({
       accessToken,
@@ -116,6 +149,141 @@ export const register = async (req: Request, res: Response) => {
     return res
       .status(500)
       .json({ message: error.message || "Something went wrong" });
+  }
+};
+
+export const verifyEmail = async (req: Request, res: Response) => {
+  const { token } = req.params;
+
+  try {
+    if (!token) {
+      return res.status(400).json({
+        message: "Verification link is missing.",
+        code: "MISSING_TOKEN",
+        details:
+          "A valid verification link is required to verify the email address.",
+      });
+    }
+    let decodedToken;
+    try {
+      decodedToken = jwt.verify(
+        token,
+        process.env.REGISTRATION_TOKEN_SECRET as string
+      ) as { userId: string };
+    } catch (err: any) {
+      if (err.name === "TokenExpiredError") {
+        return res.status(410).json({
+          message: "The verification link is invalid or has expired.",
+          code: "INVALID_TOKEN",
+          details: "Please request a new verification link.",
+        });
+      }
+      return res.status(404).json({
+        message: "Invalid token.",
+        code: "INVALID_TOKEN",
+        details: "The provided token is invalid or malformed.",
+      });
+    }
+    const { userId } = decodedToken;
+    const existingUser = await User.findById(userId as string);
+    if (!existingUser) {
+      return res.status(404).json({
+        message: "User not found.",
+        code: "USER_NOT_FOUND",
+        details: "The user account associated with the token was not found.",
+      });
+    }
+    if (existingUser.verifyEmail) {
+      return res.status(400).json({
+        message: "Email already verified.",
+        code: "EMAIL_ALREADY_VERIFIED",
+        details: "The email address is already verified.",
+      });
+    }
+    existingUser.verifyEmail = true;
+    existingUser.emailVerificationToken = "";
+    existingUser.emailVerificationExpires = null as any;
+    await existingUser.save();
+    return res.status(200).json({
+      message: "Email verified.",
+      code: "EMAIL_VERIFIED",
+      details: "The email address has been successfully verified.",
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: error.message || "Something went wrong",
+    });
+  }
+};
+
+export const resendVerifyEmail = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  const userId = req.userId;
+  console.log("userId", userId);
+
+  if (!userId) {
+    return res.status(400).json({
+      message: "User is not authenticated.",
+      code: "USER_NOT_AUTHENTICATED",
+      details:
+        "A valid user must be authenticated to resend the verification email.",
+    });
+  }
+
+  try {
+    const user = await User.findById(userId); // Veritabanından kullanıcıyı buluyoruz
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found.",
+        code: "USER_NOT_FOUND",
+        details: "No user found with the provided ID.",
+      });
+    }
+
+    if (user.verifyEmail) {
+      return res.status(400).json({
+        message: "Email already verified.",
+        code: "EMAIL_ALREADY_VERIFIED",
+        details: "The email address is already verified.",
+      });
+    }
+
+    const registerMailToken = generateRegistrationToken(user._id as string);
+    const registerMailExpires =
+      process.env.REGISTRATION_TOKEN_SECRET_EXPIRES_IN;
+
+    user.emailVerificationToken = registerMailToken;
+    user.emailVerificationExpires = new Date(
+      Date.now() + parseInt(registerMailExpires as string) * 60 * 1000
+    );
+    await user.save();
+
+    const sendMail = await resendVerificationMail(
+      user.username,
+      user.email,
+      registerMailToken
+    );
+
+    if (!sendMail) {
+      return res.status(500).json({
+        message: "Failed to send registration email.",
+        code: "MAIL_SEND_ERROR",
+        details:
+          "An error occurred while sending the registration email. Please try again.",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Verification email sent.",
+      code: "EMAIL_SENT",
+      details: "A new verification email has been sent to your email address.",
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: error.message || "Something went wrong",
+    });
   }
 };
 
@@ -209,7 +377,13 @@ export const login = async (req: Request, res: Response) => {
     const accessToken = generateAccessToken(userId.toString());
     const refreshToken = generateRefreshToken(userId.toString());
 
-    return res.status(200).json({ accessToken, refreshToken });
+    return res.status(200).json({
+      accessToken,
+      refreshToken,
+      message: "Login successful.",
+      code: "LOGIN_SUCCESS",
+      details: "User logged in successfully.",
+    });
   } catch (error: any) {
     return res.status(500).json({
       message: "An internal server error occurred.",
