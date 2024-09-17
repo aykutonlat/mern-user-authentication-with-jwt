@@ -91,3 +91,13 @@ export const handleIpAndLoginHistory = async (
     }
   }
 };
+
+export const generateRegistrationToken = (userId: string): string => {
+  const registrationTokenSecret = process.env.REGISTRATION_TOKEN_SECRET;
+  if (!registrationTokenSecret) {
+    throw new Error("Registration token secret is missing");
+  }
+  return jwt.sign({ userId }, registrationTokenSecret, {
+    expiresIn: process.env.REGISTRATION_TOKEN_SECRET_EXPIRES_IN,
+  });
+};
