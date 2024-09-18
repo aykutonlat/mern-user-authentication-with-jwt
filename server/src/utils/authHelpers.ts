@@ -101,3 +101,13 @@ export const generateRegistrationToken = (userId: string): string => {
     expiresIn: process.env.REGISTRATION_TOKEN_SECRET_EXPIRES_IN,
   });
 };
+
+export const generateForgotPasswordToken = (userId: string): string => {
+  const forgotPasswordTokenSecret = process.env.PASSWORD_RESET_TOKEN_SECRET;
+  if (!forgotPasswordTokenSecret) {
+    throw new Error("Forgot password token secret is missing");
+  }
+  return jwt.sign({ userId }, forgotPasswordTokenSecret, {
+    expiresIn: process.env.PASSWORD_RESET_TOKEN_SECRET_EXPIRES_IN,
+  });
+};
