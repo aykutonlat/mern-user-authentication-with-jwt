@@ -3,6 +3,7 @@ import {
   updateProfile,
   uploadProfilePicture,
   deleteProfilePicture,
+  getProfile,
 } from "../controllers/auth/userAuthController";
 import { validUserToken } from "../middleware/auth/authMiddleware";
 import upload from "../uploads/upload";
@@ -21,3 +22,4 @@ userProfileRoutes.post(
   validUserToken,
   deleteProfilePicture
 );
+userProfileRoutes.get("/get-profile", validUserToken, getProfile);
