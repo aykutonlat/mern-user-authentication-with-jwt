@@ -10,6 +10,7 @@ import {
   checkEmail,
   forgotPassword,
   resetPassword,
+  refreshToken,
 } from "./controllers/auth/userAuthController";
 import connectDB from "./config/database";
 import { userMailsRoutes } from "./routes/mailRoutes";
@@ -32,6 +33,7 @@ app.post("/forgot-password", forgotPassword);
 app.post("/reset-password/:token?", resetPassword);
 app.post("/login", login);
 app.get("/verify-email/:token?", verifyEmail);
+app.get("/refresh-token/:token?", refreshToken);
 app.use("/mails", userMailsRoutes);
 app.use("/profile", userProfileRoutes);
 

@@ -111,3 +111,21 @@ export const generateForgotPasswordToken = (userId: string): string => {
     expiresIn: process.env.PASSWORD_RESET_TOKEN_SECRET_EXPIRES_IN,
   });
 };
+
+export const calculateProfileCompletion = (user: IUser): number => {
+  let completion = 0;
+  const totalFields = 8;
+
+  if (user.firstName) completion++;
+  if (user.lastName) completion++;
+  if (user.email) completion++;
+  if (user.username) completion++;
+  if (user.phone) completion++;
+  if (user.address) completion++;
+  if (user.profilePicture) completion++;
+  if (user.gender) completion++;
+
+  const profileCompletion = (completion / totalFields) * 100;
+
+  return profileCompletion;
+};

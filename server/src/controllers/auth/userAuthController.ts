@@ -7,6 +7,7 @@ import url from "url";
 import { User } from "../../models/userModel";
 import { passwordValidation } from "../../utils/validation";
 import {
+  calculateProfileCompletion,
   comparePassword,
   generateAccessToken,
   generateForgotPasswordToken,
@@ -133,7 +134,7 @@ export const register = async (req: Request, res: Response) => {
     user.emailVerificationExpires = new Date(
       Date.now() + ms(registerMailExpires as string)
     );
-
+    user.profileCompletion = calculateProfileCompletion(user);
     await user.save();
 
     const sendMail = await sendVerificationMail(
@@ -355,13 +356,7 @@ export const resendVerifyEmail = async (
     }
 
     const registerMailToken = generateRegistrationToken(user._id as string);
-    const registerMailExpires =
-      process.env.REGISTRATION_TOKEN_SECRET_EXPIRES_IN;
-
     user.emailVerificationToken = registerMailToken;
-    user.emailVerificationExpires = new Date(
-      Date.now() + parseInt(registerMailExpires as string) * 60 * 1000
-    );
     await user.save();
 
     const sendMail = await resendVerificationMail(
@@ -675,7 +670,6 @@ export const updateProfile = async (
     firstName,
     lastName,
     gender,
-    phone,
     street,
     city,
     state,
@@ -702,7 +696,6 @@ export const updateProfile = async (
     if (gender && ["male", "female", "other"].includes(gender)) {
       user.gender = gender;
     }
-    if (phone) user.phone = phone;
     if (timezone) user.timezone = timezone;
 
     let address = await Address.findOne({ userId: user._id });
@@ -741,6 +734,7 @@ export const updateProfile = async (
     user.notificationPreferences =
       notificationPreferences._id as mongoose.Types.ObjectId;
 
+    user.profileCompletion = calculateProfileCompletion(user);
     await user.save();
 
     return res.status(200).json({
@@ -798,6 +792,7 @@ export const uploadProfilePicture = async (
       user.profilePicture = req.file.path;
     }
 
+    user.profileCompletion = calculateProfileCompletion(user);
     await user.save();
 
     return res.status(200).json({
@@ -834,19 +829,99 @@ export const deleteProfilePicture = async (
       );
       let publicId = pathname?.split("/").slice(-2).join("/");
       publicId = publicId?.split(".").slice(0, -1).join(".");
-      console.log("publicId", publicId);
 
       if (publicId) {
         await cloudinary.uploader.destroy(publicId);
       }
 
       user.profilePicture = "";
+      user.profileCompletion = calculateProfileCompletion(user);
       await user.save();
     }
 
     return res.status(200).json({
       message: "Profile picture deleted successfully",
       code: "PROFILE_PICTURE_DELETED",
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: error.message || "Something went wrong",
+    });
+  }
+};
+
+export const refreshToken = async (req: Request, res: Response) => {
+  const { token } = req.params;
+
+  if (!token) {
+    return res.status(400).json({
+      message: "Refresh token is required.",
+      code: "MISSING_REFRESH_TOKEN",
+      details:
+        "A valid refresh token is required to generate a new access token.",
+    });
+  }
+
+  try {
+    let decodedToken;
+    try {
+      decodedToken = jwt.verify(
+        token,
+        process.env.REFRESH_TOKEN_SECRET as string
+      ) as { userId: string };
+    } catch (err: any) {
+      return res.status(401).json({
+        message: "Invalid token.",
+        code: "INVALID_TOKEN",
+        details: "The provided token is invalid or has expired.",
+      });
+    }
+
+    const { userId } = decodedToken;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found.",
+        code: "USER_NOT_FOUND",
+        details: "No user found with the provided ID.",
+      });
+    }
+
+    const accessToken = generateAccessToken(user._id as string);
+    const refreshToken = generateRefreshToken(user._id as string);
+
+    return res.status(200).json({
+      accessToken,
+      refreshToken,
+    });
+  } catch (error: any) {
+    return res.status(500).json({
+      message: error.message || "Something went wrong",
+    });
+  }
+};
+
+export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
+  const userId = req.userId;
+
+  try {
+    const user = await User.findById(userId)
+      .populate("address", "-_id -userId -__v")
+      .populate("notificationPreferences", "-_id -userId -__v")
+      .populate("loginHistory", "-_id -userId -__v")
+      .select(
+        "-_id -password -accountLockDuration -verifiedPhone -updatedAt -__v -lockUntil -passwordResetExpires -isActive -accountLocked -accountStatus -passwordResetToken -emailVerificationToken -emailVerificationExpires"
+      );
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found",
+        code: "USER_NOT_FOUND",
+        details: "No user found with the provided ID.",
+      });
+    }
+
+    return res.status(200).json({
+      user,
     });
   } catch (error: any) {
     return res.status(500).json({
