@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import { IUser } from "../models/userModel";
 import { LoginHistory } from "../models/loginHistoryModel";
 import mongoose from "mongoose";
+import { sendNewLoginAlertMail } from "../mails/newLoginAlertMail";
 
 dotenv.config();
 
@@ -75,7 +76,14 @@ export const handleIpAndLoginHistory = async (
       loginTime: new Date(),
       ipAddress,
     });
+
     await loginHistory.save();
+    await sendNewLoginAlertMail(
+      user.username,
+      user.email,
+      ipAddress,
+      loginHistory.loginTime.toUTCString()
+    );
 
     user.loginHistory.push(loginHistory._id as mongoose.Types.ObjectId);
     user.lastLoginIp = ipAddress as string;
